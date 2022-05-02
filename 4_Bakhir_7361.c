@@ -17,22 +17,16 @@
 
 
 pthread_cond_t cond_container_arrived;
-pthread_cond_t loadout_allowed;
 pthread_mutex_t m_wait_for_container;
-pthread_mutex_t m_loadout_allowance;
-pthread_mutex_t m_container_loading_out;
 pthread_mutex_t m_print;
 pthread_mutex_t m_queue;
 
 pthread_cond_t container_ended_loadout;
 pthread_mutex_t m_container_ended_loadout;
 
-int T = 5;        // Период появления контейнера
-int loadout_time = 2;   // время разгрузки
-int last_container_arrived = -1;
-int container_selected_to_loadout = -1; 
+int T = 5; // Период появления контейнера
+int loadout_time = 2; // время разгрузки
 
-// int MY_SIGNAL_START = SIGRTMIN();
 
 
 struct queue_node
@@ -47,16 +41,14 @@ struct queue_node* q_head = NULL;
 
 int pop_container_id_from_queue();
 struct queue_node* pop_queue_node();
-void put_container_id_in_queue
-    (
+void put_container_id_in_queue(
         int container_id, 
         pthread_cond_t* cond_var_allow_unload, 
         pthread_mutex_t* m_cond
     );
 bool is_queue_empty();
 void print_queue_state();
-struct queue_node* create_queue_node
-    (
+struct queue_node* create_queue_node(
         int container_id, 
         pthread_cond_t* cond_var_allow_unload, 
         pthread_mutex_t* m_cond
@@ -64,8 +56,7 @@ struct queue_node* create_queue_node
 
 
 
-// void container(int signo, siginfo_t* info, void* nk);
-void container(int signo, sigval_t* info);
+void container(int container_id, sigval_t* info);
 void* dispatcher(void* args);
 int sec_to_ns(float seconds);
 void fill_timerspec(struct itimerspec* spec, long int time_ns, long int interval_time_ns);
@@ -79,7 +70,6 @@ char* now();
 
 int main(int argc, char* argv[]) 
 {
-    struct sigevent event[3];
     struct sigevent* created_event;
     struct itimerspec itime[3];
     timer_t timer_id[3];
@@ -87,11 +77,10 @@ int main(int argc, char* argv[])
     
     int i=3;
     int container_ID;
-    int return_code = 0;
-    int error_code = 0;
 
     setbuf(stdout, NULL);
     srand(time(NULL));
+    pthread_mutex_init(&m_wait_for_container, NULL);
 
     for(i=0; i<3; i++)
     {
@@ -101,28 +90,17 @@ int main(int argc, char* argv[])
         initialize_signal(signumber, &container);
         created_event = initialize_event(signumber, container_ID);
 
-        return_code = timer_create(CLOCK_REALTIME, created_event, &timer_id[i]);
-        if (return_code != 0)
-        {
-            error_code = errno;
-            assert(false);
-        }
-
-        
+        timer_create(CLOCK_REALTIME, created_event, &timer_id[i]);        
         fill_timerspec(&itime[i], sec_to_ns(5), sec_to_ns(T));
         timer_settime(timer_id[i], 0, &itime[i], NULL);
     }
 
-    /* Создание и запуск Диспетчера, инициализация условных переменных и мьютексов */
-
     pthread_t  dispatch_thread;
     pthread_create(&dispatch_thread, NULL, &dispatcher, NULL);
-    // while(true);
     pthread_join(dispatch_thread, NULL);
 
     return EXIT_SUCCESS;
 }
-
 
 
 
@@ -158,11 +136,10 @@ struct sigevent* initialize_event(int signumber, int container_id)
     sigevp->sigev_signo = signumber;
     sigevp->sigev_value.sival_int = container_id;
 
-
     return sigevp;
 }
 
-/*struct sigaction*/ void initialize_signal(int signumber, void(*handler)(int, siginfo_t *, void *))
+void initialize_signal(int signumber, void(*handler)(int, siginfo_t *, void *))
 {
     sigset_t set;
     sigemptyset(&set);
@@ -175,17 +152,6 @@ struct sigevent* initialize_event(int signumber, int container_id)
 }
 
 
-void think()
-{
-    for (int i = 0; i < 3; i++)
-    {
-        usleep(1000 * 1000);
-        printf(".");
-    }
-    usleep(1000 * 1000);
-}
-
-
 void* dispatcher(void* args)
 {
     struct queue_node* current_unloading_container_data;
@@ -194,88 +160,64 @@ void* dispatcher(void* args)
     while(true)
     {
         LM; printf("%s\t| [Dispatcher]: Cycle started\n", now()); UM;
-        // Диспетчер ждет прибытия контейнера
         if (is_queue_empty())
         {
             LM; printf("%s\t| [Dispatcher]: Waiting for new containers added\n", now()); UM;
-            pthread_mutex_lock(&m_wait_for_container);
             pthread_cond_wait(&cond_container_arrived, &m_wait_for_container);
-            pthread_mutex_unlock(&m_wait_for_container);
         }
-        // pthread_mutex_lock(&m_print); printf("%s\t| [Dispatcher]: thinking", now()); think(); printf("\n"); pthread_mutex_unlock(&m_print);
-        // LM; printf("%s\t| [Dispatcher]: thinking", now()); think(); printf("\n"); UM;
 
 
-        // put_container_id_in_queue(last_container_arrived);
         LM; printf("%s\t| [Dispatcher]: Queue state: ", now()); print_queue_state(); printf("\n"); UM;
         LM; printf("%s\t| [Dispatcher]: Queue not empty, working on\n", now()); UM;
 
-        // container_selected_to_loadout = pop_container_id_from_queue();
         current_unloading_container_data = pop_queue_node();
-        // while(pthread_mutex_trylock(&m_container_loading_out) != 0)
-        // {
-        //     if (!first_notify)
-        //     {
-        //         LM; printf("%s\t| [Dispatcher]: Unloading area is busy now. Waiting\n", now()); UM;
-        //         first_notify = true;
-        //     }
-        //     usleep(500);
-        // }
-        // pthread_mutex_lock(&m_container_loading_out);
+
+        LM; printf("%s\t| [Dispatcher]: Dispatcher maked his descision: %d loads out\n", now(), current_unloading_container_data->container_id); UM;
 
         // Диспетчер посылает разрешение на разгрузку
-        LM; printf("%s\t| [Dispatcher]: Dispatcher maked his descision: %d loads out\n", now(), current_unloading_container_data->container_id); UM;
 
         pthread_mutex_lock(current_unloading_container_data->m_cond);
         pthread_cond_signal(current_unloading_container_data->cond_var_allow_unload);
         pthread_mutex_unlock(current_unloading_container_data->m_cond);
-        // pthread_mutex_lock(&m_loadout_allowance);
-        // pthread_cond_wait(&loadout_allowed, &m_loadout_allowance);
-        // pthread_mutex_unlock(&m_loadout_allowance);
 
-        LM; printf("%s\t| [Dispatcher]: Waiting container to end his load out:\n", now()); UM;
+        LM; 
+        printf
+            (
+                "%s\t| [Dispatcher]: Waiting container %d to end his load out\n", 
+                now(), current_unloading_container_data->container_id
+            ); 
+        UM;
+
         pthread_cond_wait(&container_ended_loadout, &m_container_ended_loadout);
     };
 }
 
 
-// void container(int signo, siginfo_t* info, void* nk)
-void container(int signo, sigval_t* info)
+void container(int container_id, sigval_t* info)
 {   
     pthread_cond_t* cond_var_allow_unload = malloc(sizeof(pthread_cond_t));
     pthread_mutex_t* waiting_allowance = malloc(sizeof(pthread_mutex_t));
     int ret_code, error_code;
-
-    // pthread_cond_t* cond_var_allow_unload_p = &cond_var_allow_unload;
-    // pthread_mutex_t* waiting_allowance_p = &waiting_allowance;
     
+    pthread_cond_init(cond_var_allow_unload, NULL);
     pthread_mutex_init(waiting_allowance, NULL);
-    int container_ID = signo;
+    int container_ID = container_id;
+
     LM; printf("%s\t| [Container %d]: created in thread 0x%x\n", now(), container_ID, (int)pthread_self()); UM;
 
-    last_container_arrived = container_ID;
     put_container_id_in_queue(container_ID, cond_var_allow_unload, waiting_allowance);
+
     pthread_cond_signal(&cond_container_arrived);
 
-    // pthread_cond_signal(&loadout_allowed);
     LM; printf("%s\t| [Container %d]: Waiting fow allowance\n", now(), container_ID); UM;
-    // pthread_mutex_lock(waiting_allowance);
-    ret_code = pthread_cond_wait(cond_var_allow_unload, waiting_allowance);
-    if (ret_code != 0)
-    {
-        error_code = errno;
-        assert(false);
-    }
-    // pthread_mutex_unlock(waiting_allowance);
 
+    pthread_cond_wait(cond_var_allow_unload, waiting_allowance);
 
-    // pthread_mutex_lock(&m_container_loading_out);
     // Контейнер разгружается
+
     LM; printf("%s\t| [Container %d]: Unloading\n", now(), container_ID); UM;
-    // sleep(loadout_time);
-    usleep(loadout_time * 1000000);
+    sleep(loadout_time);
     LM; printf("%s\t| [Container %d]: Unloaded, end of cycle\n", now(), container_ID); UM;
-    // pthread_mutex_unlock(&m_container_loading_out);
 
     pthread_mutex_lock(&m_container_ended_loadout);
     pthread_cond_signal(&container_ended_loadout);
