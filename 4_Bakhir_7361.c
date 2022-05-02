@@ -103,55 +103,6 @@ int main(int argc, char* argv[])
 }
 
 
-
-int sec_to_ns(float seconds)
-{
-    return (int)(seconds * 1000000);
-}
-
-void fill_timerspec(struct itimerspec* spec, long int time_ns, long int interval_time_ns)
-{
-    int value_sec = time_ns / 1000000;
-    int value_nsec = time_ns % 1000000;
-    int i_value_sec = interval_time_ns / 1000000;
-    int i_value_nsec = interval_time_ns % 1000000;
-
-    spec->it_value.tv_sec = value_sec;
-    spec->it_value.tv_nsec = value_nsec;
-    spec->it_interval.tv_sec = i_value_sec;
-    spec->it_interval.tv_nsec = i_value_nsec;
-}
-
-
-
-struct sigevent* initialize_event(int signumber, int container_id)
-{
-    struct sigevent* sigevp;
-
-    LM; printf("Intitializing event for container %d (signal: %d)\n", container_id, signumber); UM;
-
-    sigevp = malloc(sizeof(struct sigevent));
-    sigevp->sigev_notify = SIGEV_THREAD;
-    sigevp->sigev_notify_function = &container;
-    sigevp->sigev_signo = signumber;
-    sigevp->sigev_value.sival_int = container_id;
-
-    return sigevp;
-}
-
-void initialize_signal(int signumber, void(*handler)(int, siginfo_t *, void *))
-{
-    sigset_t set;
-    sigemptyset(&set);
-    struct sigaction action;
-    sigaddset(&set, signumber);
-    action.sa_flags = SA_SIGINFO;
-    action.sa_mask = set;
-    action.sa_sigaction = handler;
-    sigaction(signumber, &action, NULL);
-}
-
-
 void* dispatcher(void* args)
 {
     struct queue_node* current_unloading_container_data;
@@ -222,6 +173,54 @@ void container(int container_id, sigval_t* info)
     pthread_mutex_lock(&m_container_ended_loadout);
     pthread_cond_signal(&container_ended_loadout);
     pthread_mutex_unlock(&m_container_ended_loadout);
+}
+
+
+int sec_to_ns(float seconds)
+{
+    return (int)(seconds * 1000000);
+}
+
+void fill_timerspec(struct itimerspec* spec, long int time_ns, long int interval_time_ns)
+{
+    int value_sec = time_ns / 1000000;
+    int value_nsec = time_ns % 1000000;
+    int i_value_sec = interval_time_ns / 1000000;
+    int i_value_nsec = interval_time_ns % 1000000;
+
+    spec->it_value.tv_sec = value_sec;
+    spec->it_value.tv_nsec = value_nsec;
+    spec->it_interval.tv_sec = i_value_sec;
+    spec->it_interval.tv_nsec = i_value_nsec;
+}
+
+
+
+struct sigevent* initialize_event(int signumber, int container_id)
+{
+    struct sigevent* sigevp;
+
+    LM; printf("Intitializing event for container %d (signal: %d)\n", container_id, signumber); UM;
+
+    sigevp = malloc(sizeof(struct sigevent));
+    sigevp->sigev_notify = SIGEV_THREAD;
+    sigevp->sigev_notify_function = &container;
+    sigevp->sigev_signo = signumber;
+    sigevp->sigev_value.sival_int = container_id;
+
+    return sigevp;
+}
+
+void initialize_signal(int signumber, void(*handler)(int, siginfo_t *, void *))
+{
+    sigset_t set;
+    sigemptyset(&set);
+    struct sigaction action;
+    sigaddset(&set, signumber);
+    action.sa_flags = SA_SIGINFO;
+    action.sa_mask = set;
+    action.sa_sigaction = handler;
+    sigaction(signumber, &action, NULL);
 }
 
 
