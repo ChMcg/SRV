@@ -56,13 +56,14 @@ struct queue_node* create_queue_node(
 
 
 
-void container(int container_id, sigval_t* info);
+void container(sigval_t container_id);
 void* dispatcher(void* args);
 int sec_to_ns(float seconds);
 void fill_timerspec(struct itimerspec* spec, long int time_ns, long int interval_time_ns);
 struct sigevent* initialize_event(int signumber, int container_id);
-void initialize_signal(int signumber, void(*handler)(int, siginfo_t *, void *));
+void initialize_signal(int signumber, void(*handler)(sigval_t));
 char* now();
+void emit_cond_signal(pthread_cond_t* cond, pthread_mutex_t* mutex);
 
 
 
@@ -127,9 +128,10 @@ void* dispatcher(void* args)
 
         // Диспетчер посылает разрешение на разгрузку
 
-        pthread_mutex_lock(current_unloading_container_data->m_cond);
-        pthread_cond_signal(current_unloading_container_data->cond_var_allow_unload);
-        pthread_mutex_unlock(current_unloading_container_data->m_cond);
+        emit_cond_signal(
+                current_unloading_container_data->cond_var_allow_unload, 
+                current_unloading_container_data->m_cond
+            );
 
         LM; 
         printf
@@ -144,7 +146,7 @@ void* dispatcher(void* args)
 }
 
 
-void container(int container_id, sigval_t* info)
+void container(sigval_t container_id)
 {   
     pthread_cond_t* cond_var_allow_unload = malloc(sizeof(pthread_cond_t));
     pthread_mutex_t* waiting_allowance = malloc(sizeof(pthread_mutex_t));
@@ -152,7 +154,7 @@ void container(int container_id, sigval_t* info)
     
     pthread_cond_init(cond_var_allow_unload, NULL);
     pthread_mutex_init(waiting_allowance, NULL);
-    int container_ID = container_id;
+    int container_ID = container_id.sival_int;
 
     LM; printf("%s\t| [Container %d]: created in thread 0x%x\n", now(), container_ID, (int)pthread_self()); UM;
 
@@ -170,9 +172,15 @@ void container(int container_id, sigval_t* info)
     sleep(loadout_time);
     LM; printf("%s\t| [Container %d]: Unloaded, end of cycle\n", now(), container_ID); UM;
 
-    pthread_mutex_lock(&m_container_ended_loadout);
-    pthread_cond_signal(&container_ended_loadout);
-    pthread_mutex_unlock(&m_container_ended_loadout);
+    emit_cond_signal(&container_ended_loadout, &m_container_ended_loadout);
+}
+
+
+void emit_cond_signal(pthread_cond_t* cond, pthread_mutex_t* mutex)
+{
+    pthread_mutex_lock(mutex);
+    pthread_cond_signal(cond);
+    pthread_mutex_unlock(mutex);
 }
 
 
@@ -211,7 +219,7 @@ struct sigevent* initialize_event(int signumber, int container_id)
     return sigevp;
 }
 
-void initialize_signal(int signumber, void(*handler)(int, siginfo_t *, void *))
+void initialize_signal(int signumber, void(*handler)(sigval_t))
 {
     sigset_t set;
     sigemptyset(&set);
